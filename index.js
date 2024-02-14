@@ -87,10 +87,10 @@ async function fetchData(creator, id, videoUrl) {
   if (existingData) {
     try {
       const parsedData = JSON.parse(existingData);
-      console.log("data found", creator, id);
+      console.log("data  already exists", creator, id);
       return parsedData;
     } catch (err) {
-      console.log("data parsing error", creator, id, err);
+      console.log("data  parsing error", creator, id, err);
     }
   }
 
@@ -98,13 +98,13 @@ async function fetchData(creator, id, videoUrl) {
     const data = await tiktok.tiklydown(videoUrl);
     // make sure the data is good
     if (!data || !data.video || !data.video.noWatermark || !data.video.cover) {
-      throw new Error("data format problem", creator, id, data);
+      throw new Error("data  format problem", creator, id, data);
     }
     fs.writeFileSync(fileName, JSON.stringify(data, null, 2));
-    console.log("data fetched", creator, id);
+    console.log("data  saved", creator, id);
     return data;
   } catch (err) {
-    console.log("data fetching error", creator, id, err);
+    console.log("data  fetching error", creator, id, err);
   }
 }
 
