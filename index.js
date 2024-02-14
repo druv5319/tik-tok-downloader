@@ -67,9 +67,9 @@ function downloadVideo(creator, id, url) {
   })
     .then((response) => {
       response.data.pipe(videoStream);
-      videoStream.on("finish", () => console.log("video saved", id));
+      videoStream.on("finish", () => console.log("video saved", creator, id));
       videoStream.on("error", (error) => {
-        console.log("video saving error", id, error);
+        console.log("video saving error", creator, id, error);
         // delete the video if it was partially saved
         deleteFile(fileName);
       });
