@@ -134,9 +134,10 @@ async function main() {
       .split("\n")
       .filter((url) => url);
 
-    for (const url of videoUrls) {
+    for (const [i, url] of videoUrls.entries()) {
       // await each so we don't start getting 429s
       await saveVideo(url);
+      console.log(`${i + 1} of ${videoUrls.length} videos saved`);
     }
   }
 }
