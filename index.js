@@ -2,135 +2,143 @@ const tiktok = require("tiktok-scraper-without-watermark");
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
-const dataDir = "./data";
 const creatorsDir = "./creators";
-const coversDir = "./covers";
-const videosDir = "./videos";
 
-async function downloadVideo(id, url) {
-  console.log("downloading video", id);
-  const videoPath = path.join(videosDir, `${id}.mp4`);
-  const videoStream = fs.createWriteStream(videoPath);
+// get a filename, and make sure that the creator directory exists
+function getFileName(creator, id, ext) {
+  // make sure there's a directory for data
+  if (!fs.existsSync("./data")) fs.mkdirSync("./data");
 
-  await axios({
-    url,
-    method: "GET",
-    responseType: "stream",
-  })
-    .then((response) => {
-      response.data.pipe(videoStream);
-      videoStream.on("finish", () => console.log("saved video", id));
-      videoStream.on("error", (error) =>
-        console.error("error saving video", id, error)
-      );
-    })
-    .catch((error) => {
-      console.error("error downloading video", id, error);
-    });
+  // make sure there's a directory for the creator
+  const creatorPath = path.join("./data", creator);
+  if (!fs.existsSync(creatorPath)) fs.mkdirSync(creatorPath);
+  return path.join(creatorPath, `${id}.${ext}`);
 }
 
-async function downloadCover(id, url) {
-  console.log("downloading cover", id);
-  const coverPath = path.join(coversDir, `${id}.jpg`);
-  const coverStream = fs.createWriteStream(coverPath);
+// see if a file exists, and if so return its contents
+function getFileData(fileName) {
+  if (!fs.existsSync(fileName)) return null;
+  return fs.readFileSync(fileName);
+}
 
-  await axios({
+function deleteFile(fileName) {
+  if (fs.existsSync(fileName)) fs.unlinkSync(fileName);
+}
+
+async function downloadCover(creator, id, url) {
+  const fileName = getFileName(creator, id, "jpg");
+  if (getFileData(fileName)) {
+    console.log("cover already exists", creator, id);
+    return;
+  }
+
+  const coverStream = fs.createWriteStream(fileName);
+  axios({
     url,
     method: "GET",
     responseType: "stream",
   })
     .then((response) => {
       response.data.pipe(coverStream);
-      coverStream.on("finish", () => console.log("saved cover", id));
-      coverStream.on("error", (error) =>
-        console.error("error streaming cover", id, error)
-      );
+      coverStream.on("finish", () => console.log("cover saved", creator, id));
+      coverStream.on("error", (error) => {
+        console.log("cover streaming error", id, error);
+        // delete the cover if it was partially saved
+        deleteFile(fileName);
+      });
     })
     .catch((error) => {
-      console.error("error downloading cover", id, error);
+      console.log("cover downloading error", id, error);
     });
 }
 
-async function fetchVideo(videoUrl) {
-  console.log("fetchting video", videoUrl);
-  let data;
-  try {
-    data = await tiktok.tiklydown(videoUrl);
-  } catch (err) {
-    console.error("error downloading tiktok data", videoUrl, err);
+function downloadVideo(creator, id, url) {
+  const fileName = getFileName(creator, id, "mp4");
+  if (getFileData(fileName)) {
+    console.log("video already exists", creator, id);
     return;
   }
-  console.log("got data", data.id);
 
-  // download the video async so we can keep moving
-  downloadVideo(data.id, data.video.noWatermark);
-  downloadCover(data.id, data.video.cover);
-  return data;
+  const videoStream = fs.createWriteStream(fileName);
+  axios({
+    url,
+    method: "GET",
+    responseType: "stream",
+  })
+    .then((response) => {
+      response.data.pipe(videoStream);
+      videoStream.on("finish", () => console.log("video saved", id));
+      videoStream.on("error", (error) => {
+        console.log("video saving error", id, error);
+        // delete the video if it was partially saved
+        deleteFile(fileName);
+      });
+    })
+    .catch((error) => {
+      console.log("video downloading error", id, error);
+    });
 }
 
-function extractExistingData(jsonFilePath) {
+async function fetchData(creator, id, videoUrl) {
+  const fileName = getFileName(creator, id, "json");
+
+  // first, see if we already have the data
+  const existingData = getFileData(fileName);
+  if (existingData) {
+    try {
+      const parsedData = JSON.parse(existingData);
+      console.log("data found", creator, id);
+      return parsedData;
+    } catch (err) {
+      console.log("data parsing error", creator, id, err);
+    }
+  }
+
   try {
-    const data = fs.readFileSync(jsonFilePath, { encoding: "utf8" });
-    if (data) {
-      const parsedData = JSON.parse(data);
-      return (parsedData && parsedData.videos) || [];
+    const data = await tiktok.tiklydown(videoUrl);
+    // make sure the data is good
+    if (!data || !data.video || !data.video.noWatermark || !data.video.cover) {
+      throw new Error("data format problem", creator, id, data);
     }
-  } catch (error) {
-    console.error("Error reading existing JSON file:", error);
+    fs.writeFileSync(fileName, JSON.stringify(data, null, 2));
+    console.log("data fetched", creator, id);
+    return data;
+  } catch (err) {
+    console.log("data fetching error", creator, id, err);
   }
-  // if no data was returned, return an empty array
-  return [];
 }
 
-async function parseFile(file) {
-  const filePath = path.join(creatorsDir, file);
-  // only parse .txt files
-  if (!filePath.endsWith(".txt")) return;
-  const videoUrls = fs
-    .readFileSync(filePath, "utf8")
-    .toString()
-    .split("\n")
-    .filter((url) => url);
-
-  const jsonFilename = path.basename(filePath).replace(".txt", ".json");
-  const jsonFilePath = path.join(dataDir, jsonFilename);
-  const existingData = extractExistingData(jsonFilePath);
-  console.log("got data:", existingData);
-
-  // Open a JSON file to write data progressively
-  const stream = fs.createWriteStream(jsonFilePath, { flags: "w" });
-  if (existingData.length > 0) {
-    stream.write(JSON.stringify({ videos: existingData }).slice(0, -2) + ",");
+async function saveVideo(videoUrl) {
+  const creator = videoUrl.split("@").pop().split("/").shift();
+  const id = videoUrl.split("/").pop();
+  const data = await fetchData(creator, id, videoUrl);
+  if (data && data.video) {
+    downloadVideo(creator, id, data.video.noWatermark);
+    downloadCover(creator, id, data.video.cover);
   } else {
-    stream.write('{"videos": [');
+    console.log("no data for", creator, id);
   }
-
-  // Iterate, fetch and parse all videos
-  for (let i = 0; i < videoUrls.length; i++) {
-    const videoUrl = videoUrls[i];
-    const videoId = videoUrl.split("/").pop();
-    // if we already have this data, skip it
-    if (existingData.find((video) => video.id == videoId)) {
-      console.log("skipping video", videoId);
-      continue;
-    }
-
-    const videoData = await fetchVideo(videoUrl, stream);
-
-    // only write data if it was fetched
-    if (videoData) {
-      if (i) stream.write(",");
-      stream.write(JSON.stringify(videoData));
-    }
-  }
-  stream.write("]}");
-  stream.end();
 }
 
 async function main() {
-  // Fetch all files in /creators and iterate through them
-  const files = await fs.promises.readdir(creatorsDir);
-  for (const file of files) parseFile(file);
+  // Fetch all .txt files in /creators
+  const files = (await fs.promises.readdir(creatorsDir)).filter((file) =>
+    file.endsWith(".txt")
+  );
+
+  for (const file of files) {
+    const filePath = path.join(creatorsDir, file);
+    const videoUrls = fs
+      .readFileSync(filePath, "utf8")
+      .toString()
+      .split("\n")
+      .filter((url) => url);
+
+    for (const url of videoUrls) {
+      // await each so we don't start getting 429s
+      await saveVideo(url);
+    }
+  }
 }
 
 main();
